@@ -61,8 +61,8 @@ clean:
 	-@rm -rf $(WASM)
 	-@rm -f ./val.txt
 
-run: bin/game
-	./bin/game
+run: bin/server
+	./bin/server
 
 valgrind: 
 	@valgrind --leak-check=full \

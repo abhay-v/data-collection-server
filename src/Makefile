@@ -3,7 +3,7 @@ PROJ_OBJ := $(ROOT_PATH)/$(OBJ)
 PROJ_BIN := $(ROOT_PATH)/$(BIN)
 PROJ_INCLUDE := $(ROOT_PATH)/$(INCLUDE)
 
-CFLAGS += -Wall -Wextra -ggdb3 -std=gnu23 -O3
+CFLAGS += -Wall -Wextra -ggdb3 -std=gnu23 -O3 -I$(EXTERNAL_DIR)/libsocket/headers
 LDFLAGS += 
 
 TARGET := $(PROJ_BIN)/server

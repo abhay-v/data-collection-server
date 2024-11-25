@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "libunixsocket.h"
 
 int main(void) {
   printf("Hello world!\n");
