@@ -16,7 +16,7 @@ BIN := bin
 INCLUDE := include
 
 EXTERNAL_DIR := $(ROOT_PATH)/external
-EXTERNAL_LIBS_DIR := $(ROOT_PATH)/external-libs
+EXTERNAL_LIBS_DIR :=
 
 CFLAGS := -I$(ROOT_PATH)/$(SRC) -isystem $(EXTERNAL_DIR) -I$(ROOT_PATH)/$(INCLUDE)
 
@@ -48,7 +48,6 @@ server:
 # ---------------------- UTILITY ----------------------
 
 external:
-	@mkdir -p $(EXTERNAL_LIBS_DIR)
 	@$(MAKE) -C $(EXTERNAL_DIR)
 
 dirs: 

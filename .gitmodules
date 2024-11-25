@@ -1,0 +1,3 @@
+[submodule "external/libsocket"]
+	path = external/libsocket
+	url = https://github.com/dermesser/libsocket.git
