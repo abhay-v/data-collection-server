@@ -4,7 +4,7 @@ PROJ_BIN := $(ROOT_PATH)/$(BIN)
 PROJ_INCLUDE := $(ROOT_PATH)/$(INCLUDE)
 
 CFLAGS += -Wall -Wextra -ggdb3 -std=gnu23 -O3 -I$(EXTERNAL_DIR)/libsocket/headers
-LDFLAGS += 
+LDFLAGS += -Wl,-rpath=$(EXTERNAL_DIR)/libsocket/build/C -L$(EXTERNAL_DIR)/ -l:libsocket/build/C/libsocket.so
 
 TARGET := $(PROJ_BIN)/server
 
