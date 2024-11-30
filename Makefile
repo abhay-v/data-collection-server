@@ -62,7 +62,7 @@ clean:
 	-@rm -f ./val.txt
 
 run: bin/server
-	./bin/server
+	./bin/server server
 
 valgrind: 
 	@valgrind --leak-check=full \
