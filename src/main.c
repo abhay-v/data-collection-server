@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <errno.h>
+#include <signal.h>
 
 #include "libinetsocket.h"
 #include "util/dynamic_array.h"
@@ -25,6 +26,17 @@ enum message_type {
 
 };
 
+struct ping_pong {
+  time_t time;
+};
+
+struct message {
+  enum message_type type;
+
+  uint64_t message_size;
+  char data[];
+};
+
 int server(void) {
   printf("Server!\n");
 
@@ -37,7 +49,7 @@ int server(void) {
 
   DA_TYPE(int) clients = { 0 };
 
-  char *buf = malloc(BUFSIZ);
+  char *buf = malloc(BUFSIZE);
   if (buf == NULL) {
     fprintf(stderr, "Buy more ram, lol.\n");
     exit(EXIT_FAILURE);
@@ -46,7 +58,8 @@ int server(void) {
   for (;;) {
     {
       int tmp = 0;
-      if ((tmp = accept_inet_stream_socket(ws, NULL, 0, NULL, 0, 0, 0)) >= 0) {
+      if ((tmp = accept_inet_stream_socket(ws, NULL, 0, NULL, 0, 0,
+                                           SOCK_NONBLOCK)) >= 0) {
         DA_APPEND(&clients, tmp);
         for (uint32_t i = 0; i < clients.count; i++) {
           printf("%d ", DA_AT(clients, i));
@@ -55,24 +68,43 @@ int server(void) {
       }
     }
 
+    int n = 0;
     for (uint32_t i = 0; i < clients.count; i++) {
-      memset(buf, 0, BUFSIZ);
+      memset(buf, 0, BUFSIZE);
 
-      int n = 0;
+      n = 0;
       errno = 0;
-      if ((n = recv(DA_AT(clients, i), buf, BUFSIZ, 0)) == -1) {
-        printf("Purged %d!\n", DA_AT(clients, i));
-        if (errno != EWOULDBLOCK) {
-          DA_POP(&clients, i); // remove closed connection
-        }
+      if ((n = recv(DA_AT(clients, i), buf, BUFSIZE, MSG_DONTWAIT)) == -1) {
+        if (errno != EWOULDBLOCK || errno != EAGAIN) {
+          printf("Purged %d!\n", DA_AT(clients, i));
 
-      } else {
-        if (n != 0)
-          printf("%d: %.*s\n", DA_AT(clients, i), n, buf);
+          destroy_inet_socket(DA_AT(clients, i));
+          DA_POP(&clients, i); // remove closed connection
+
+          printf("error: %s\n", strerror(errno));
+
+          continue;
+        }
+      } else if (n != 0) {
+        printf("%d: %.*s%c", DA_AT(clients, i), n, buf,
+               buf[n - 1] != '\n' ? '\n' : 0);
+      }
+
+      n = 0;
+      errno = 0;
+      if ((n = send(DA_AT(clients, i), "Hello", 6, MSG_NOSIGNAL)) == -1) {
+        if (errno != EWOULDBLOCK || errno != EAGAIN) {
+          printf("Purged %d!\n", DA_AT(clients, i));
+
+          destroy_inet_socket(DA_AT(clients, i));
+          DA_POP(&clients, i); // remove closed connection
+          printf("error: %s\n", strerror(errno));
+        }
       }
     }
   }
 
+  close(ws);
   destroy_inet_socket(ws);
 
   return 0;
@@ -96,6 +128,9 @@ int client(void) {
     fprintf(stderr, "Failed to send message\n");
     return 1;
   }
+
+  for (;;) {
+  };
 
   destroy_inet_socket(ws);
   return 0;
