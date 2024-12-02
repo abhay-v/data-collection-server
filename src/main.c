@@ -18,11 +18,24 @@
 
 #define BUFSIZE 4 * 1024
 
+#define MAX_ITERS 128
+
 enum message_type {
 
   MESSAGE_TYPE_NONE,
   MESSAGE_TYPE_HELLO,
   MESSAGE_TYPE_PING,
+  MESSAGE_TYPE_ASCII,
+
+};
+
+enum error_type {
+
+  ERROR_TYPE_NONE = 0,
+  ERROR_TYPE_EXCEEDED_MAX_ITERS,
+  ERROR_TYPE_CONNECTION_NOT_OPEN,
+  ERROR_TYPE_WOULD_BLOCK,
+  ERROR_TYPE_BAD_MESSAGE,
 
 };
 
@@ -33,9 +46,66 @@ struct ping_pong {
 struct message {
   enum message_type type;
 
+  // Includes the size of the header
   uint64_t message_size;
   char data[];
 };
+
+struct client {
+  int socket;
+};
+
+enum error_type send_msg(const int ws, void *data, int len) {
+  int n = 0;
+  errno = 0;
+
+  uint32_t iters = 0;
+  do {
+    n = send(ws, data, len, MSG_NOSIGNAL);
+    if (n == -1) {
+      if (errno == EWOULDBLOCK || errno == EAGAIN) {
+        return ERROR_TYPE_WOULD_BLOCK;
+
+      } else {
+        return ERROR_TYPE_CONNECTION_NOT_OPEN;
+      }
+    }
+
+    len -= n;
+    data = (char *)data + n;
+
+    iters++;
+
+  } while (iters < MAX_ITERS && len != 0);
+
+  if (len != 0) {
+    return ERROR_TYPE_EXCEEDED_MAX_ITERS;
+  }
+
+  return ERROR_TYPE_NONE;
+}
+
+enum error_type read_msg(const int ws, void *buf, const uint64_t buf_size,
+                         int *len) {
+  int n = 0;
+  errno = 0;
+
+  n = recv(ws, buf, buf_size, MSG_DONTWAIT);
+  if (n == -1) {
+    if (errno == EWOULDBLOCK || errno == EAGAIN) {
+      *len = 0;
+
+      return ERROR_TYPE_WOULD_BLOCK;
+
+    } else {
+      return ERROR_TYPE_CONNECTION_NOT_OPEN;
+    }
+  }
+
+  *len = n;
+
+  return ERROR_TYPE_NONE;
+}
 
 int server(void) {
   printf("Server!\n");
@@ -47,22 +117,19 @@ int server(void) {
     return 1;
   }
 
-  DA_TYPE(int) clients = { 0 };
+  DA_TYPE(struct client) clients = { 0 };
 
   char *buf = malloc(BUFSIZE);
-  if (buf == NULL) {
-    fprintf(stderr, "Buy more ram, lol.\n");
-    exit(EXIT_FAILURE);
-  }
+  assert(buf != NULL && "Buy more ram, lol");
 
   for (;;) {
     {
       int tmp = 0;
       if ((tmp = accept_inet_stream_socket(ws, NULL, 0, NULL, 0, 0,
                                            SOCK_NONBLOCK)) >= 0) {
-        DA_APPEND(&clients, tmp);
+        DA_APPEND(&clients, (struct client){ .socket = tmp });
         for (uint32_t i = 0; i < clients.count; i++) {
-          printf("%d ", DA_AT(clients, i));
+          printf("%d ", DA_AT(clients, i).socket);
         }
         printf("\n");
       }
@@ -70,35 +137,40 @@ int server(void) {
 
     int n = 0;
     for (uint32_t i = 0; i < clients.count; i++) {
-      memset(buf, 0, BUFSIZE);
-
       n = 0;
       errno = 0;
-      if ((n = recv(DA_AT(clients, i), buf, BUFSIZE, MSG_DONTWAIT)) == -1) {
-        if (errno != EWOULDBLOCK || errno != EAGAIN) {
-          printf("Purged %d!\n", DA_AT(clients, i));
 
-          destroy_inet_socket(DA_AT(clients, i));
-          DA_POP(&clients, i); // remove closed connection
+      if (read_msg(DA_AT(clients, i).socket, buf, BUFSIZE, &n) ==
+          ERROR_TYPE_CONNECTION_NOT_OPEN) {
+        printf("Purged %d!\n", DA_AT(clients, i).socket);
 
-          printf("error: %s\n", strerror(errno));
+        destroy_inet_socket(DA_AT(clients, i).socket);
+        DA_POP(&clients, i); // remove closed connection
 
-          continue;
-        }
+        printf("error: %s\n", strerror(errno));
+
+        continue;
+
       } else if (n != 0) {
-        printf("%d: %.*s%c", DA_AT(clients, i), n, buf,
+        printf("%d: %.*s%c", DA_AT(clients, i).socket, n, buf,
                buf[n - 1] != '\n' ? '\n' : 0);
       }
 
-      n = 0;
-      errno = 0;
-      if ((n = send(DA_AT(clients, i), "Hello", 6, MSG_NOSIGNAL)) == -1) {
-        if (errno != EWOULDBLOCK || errno != EAGAIN) {
-          printf("Purged %d!\n", DA_AT(clients, i));
+      {
+        struct message tmp = {
+          .type = MESSAGE_TYPE_NONE,
+          .message_size = sizeof(struct message),
+        };
 
-          destroy_inet_socket(DA_AT(clients, i));
-          DA_POP(&clients, i); // remove closed connection
-          printf("error: %s\n", strerror(errno));
+        if (send_msg(DA_AT(clients, i).socket, &tmp, tmp.message_size) ==
+            ERROR_TYPE_CONNECTION_NOT_OPEN) {
+          if (errno != EWOULDBLOCK || errno != EAGAIN) {
+            printf("Purged %d!\n", DA_AT(clients, i).socket);
+
+            destroy_inet_socket(DA_AT(clients, i).socket);
+            DA_POP(&clients, i); // remove closed connection
+            printf("error: %s\n", strerror(errno));
+          }
         }
       }
     }
@@ -106,6 +178,8 @@ int server(void) {
 
   close(ws);
   destroy_inet_socket(ws);
+  DA_FREE(&clients);
+  free(buf);
 
   return 0;
 }
