@@ -5,6 +5,9 @@
 #include <stdint.h>
 #include <errno.h>
 #include <unistd.h>
+#include <limits.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 
 #include "libinetsocket.h"
 #include "util/dynamic_array.h"
@@ -46,43 +49,7 @@ struct message {
 
 struct client {
   int socket;
-};
-
-enum job_type {
-
-  JOB_TYPE_NONE = 0,
-  JOB_TYPE_READ,
-  JOB_TYPE_WRITE,
-  JOB_TYPE_PARSE,
-
-};
-
-struct read_job {
-  uint32_t client_index;
-
-  uint8_t *buf;
-  uint64_t buf_size;
-};
-
-struct write_job {
-  uint32_t client_index;
-
-  uint8_t *data;
-  uint64_t size;
-};
-
-struct parse_job {
-  struct message message;
-};
-
-struct job {
-  enum job_type type;
-
-  union {
-    struct read_job read_job;
-    struct write_job write_job;
-    struct parse_job parse_job;
-  };
+  FILE *file;
 };
 
 DA_TYPE(struct job) job_queue = { 0 };
@@ -90,7 +57,7 @@ DA_TYPE(struct job) job_queue = { 0 };
 int server_fd = -1;
 DA_TYPE(struct client) clients = { 0 };
 
-enum error_type send_msg(const int ws, void *data, int len) {
+static enum error_type send_msg(const int ws, void *data, int len) {
   int n = 0;
   errno = 0;
 
@@ -120,8 +87,8 @@ enum error_type send_msg(const int ws, void *data, int len) {
   return ERROR_TYPE_NONE;
 }
 
-enum error_type read_msg(const int ws, void *buf, const uint64_t buf_size,
-                         int *len) {
+static enum error_type read_msg(const int ws, void *buf,
+                                const uint64_t buf_size, int *len) {
   int n = 0;
   errno = 0;
 
@@ -142,25 +109,22 @@ enum error_type read_msg(const int ws, void *buf, const uint64_t buf_size,
   return ERROR_TYPE_NONE;
 }
 
-int do_work() {
-  if (job_queue.count == 0) {
-    return 0;
-  }
+static int write_to_file(FILE *file, void *data, int len) {
+  errno = 0;
+  uint32_t iter = 0;
+  do {
+    int n = fwrite(data, 1, len, file);
 
-  struct job job = DA_POP(&job_queue, 0);
+    len -= n;
+    data = (char *)data + n;
 
-  if (job.type == JOB_TYPE_READ) {
-    int client_ws = DA_AT(clients, job.read_job.client_index).socket;
-    int len = 0;
-    enum error_type error_type =
-      read_msg(client_ws, job.read_job.buf, job.read_job.buf_size, &len);
+    iter++;
 
-    if (error_type == ERROR_TYPE_CONNECTION_NOT_OPEN) {
-      printf("Purged %d!\n", client_ws);
+  } while (iter < MAX_ITERS && len);
 
-      destroy_inet_socket(client_ws);
-      DA_POP(&clients, job.read_job.client_index); // remove closed connection
-    }
+  if (len != 0) {
+    perror("Failed to complete write");
+    return 1;
   }
 
   return 0;
@@ -179,15 +143,30 @@ int server(void) {
   uint8_t *buf = malloc(BUFSIZE);
   assert(buf != NULL && "Buy more ram, lol");
 
+  {
+    struct stat st = { 0 };
+
+    if (stat("./collected_data", &st) == -1) {
+      mkdir("./collected_data", 0700);
+    }
+  }
+
   for (;;) {
     {
       int tmp = 0;
       if ((tmp = accept_inet_stream_socket(server_fd, NULL, 0, NULL, 0, 0,
                                            SOCK_NONBLOCK)) >= 0) {
-        DA_APPEND(&clients, (struct client){ .socket = tmp });
+        char filename[PATH_MAX] = { 0 };
+        snprintf(filename, sizeof(filename), "./collected_data/data_sock_%d",
+                 tmp);
+
+        DA_APPEND(&clients, ((struct client){ .socket = tmp,
+                                              .file = fopen(filename, "wb") }));
+
         for (uint32_t i = 0; i < clients.count; i++) {
           printf("%d ", DA_AT(clients, i).socket);
         }
+
         printf("\n");
       }
     }
@@ -202,6 +181,8 @@ int server(void) {
         printf("Purged %d!\n", DA_AT(clients, i).socket);
 
         destroy_inet_socket(DA_AT(clients, i).socket);
+        fclose(DA_AT(clients, i).file);
+
         DA_POP(&clients, i); // remove closed connection
 
         printf("error: %s\n", strerror(errno));
@@ -209,6 +190,9 @@ int server(void) {
         continue;
 
       } else if (n != 0) {
+        int ret = write_to_file(DA_AT(clients, i).file, buf, n);
+        assert(ret == 0);
+
         printf("%d: %.*s%c", DA_AT(clients, i).socket, n, buf,
                buf[n - 1] != '\n' ? '\n' : 0);
       }
@@ -225,7 +209,10 @@ int server(void) {
             printf("Purged %d!\n", DA_AT(clients, i).socket);
 
             destroy_inet_socket(DA_AT(clients, i).socket);
+            fclose(DA_AT(clients, i).file);
+
             DA_POP(&clients, i); // remove closed connection
+
             printf("error: %s\n", strerror(errno));
           }
         }
