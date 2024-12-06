@@ -23,6 +23,8 @@ int client(void) {
 
   int ws = create_inet_stream_socket("192.168.1.3", "6969", LIBSOCKET_BOTH,
                                      SOCK_NONBLOCK);
+  int opt = 1;
+  setsockopt(ws, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
   const char *msg = "Hello from client\n";
 
   uint32_t iter = 0;

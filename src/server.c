@@ -127,6 +127,8 @@ static int write_to_file(FILE *file, void *data, int len) {
     return 1;
   }
 
+  fflush(file);
+
   return 0;
 }
 
