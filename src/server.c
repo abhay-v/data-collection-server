@@ -133,9 +133,17 @@ static int write_to_file(FILE *file, void *data, int len) {
 }
 
 int server(void) {
+  mkfifo("/tmp/serv_pipe",
+         S_IRWXU | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
+  mkfifo("/tmp/class_pipe",
+         S_IRWXU | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
+
+  FILE *send_fifo = fopen("/tmp/serv_pipe", "wb");
+  FILE *recv_fifo = fopen("/tmp/class_pipe", "rb");
+
   printf("Server!\n");
 
-  server_fd = create_inet_server_socket("192.168.1.3", "6969", LIBSOCKET_TCP,
+  server_fd = create_inet_server_socket("0.0.0.0", "6969", LIBSOCKET_TCP,
                                         LIBSOCKET_BOTH, SOCK_NONBLOCK);
   if (server_fd == -1) {
     perror("Could not initialize server\n");
@@ -195,8 +203,9 @@ int server(void) {
         int ret = write_to_file(DA_AT(clients, i).file, buf, n);
         assert(ret == 0);
 
-        printf("%d: %.*s%c", DA_AT(clients, i).socket, n, buf,
-               buf[n - 1] != '\n' ? '\n' : 0);
+        // printf("%d: %.*s%c", DA_AT(clients, i).socket, n, buf,
+        //        buf[n - 1] != '\n' ? '\n' : 0);
+        printf("%d: sizeof message: %d\n", DA_AT(clients, i).socket, n);
       }
 
       {
