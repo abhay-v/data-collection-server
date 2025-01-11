@@ -8,11 +8,12 @@
 #include <limits.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <fcntl.h>
 
 #include "libinetsocket.h"
 #include "util/dynamic_array.h"
 
-#define BUFSIZE 4 * 1024
+#define BUFSIZE 1024 * 4
 
 #define MAX_ITERS 128
 
@@ -132,6 +133,8 @@ static int write_to_file(FILE *file, void *data, int len) {
   return 0;
 }
 
+FILE *log_file = NULL;
+
 int server(void) {
   mkfifo("/tmp/serv_pipe",
          S_IRWXU | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
@@ -141,12 +144,25 @@ int server(void) {
   FILE *send_fifo = fopen("/tmp/serv_pipe", "wb");
   FILE *recv_fifo = fopen("/tmp/class_pipe", "rb");
 
+  fcntl(fileno(send_fifo), F_SETFL,
+        fcntl(fileno(send_fifo), F_GETFL, 0) | O_NONBLOCK);
+  fcntl(fileno(recv_fifo), F_SETFL,
+        fcntl(fileno(recv_fifo), F_GETFL, 0) | O_NONBLOCK);
+
   printf("Server!\n");
 
   server_fd = create_inet_server_socket("0.0.0.0", "6969", LIBSOCKET_TCP,
                                         LIBSOCKET_BOTH, SOCK_NONBLOCK);
   if (server_fd == -1) {
     perror("Could not initialize server\n");
+    return 1;
+  }
+
+  log_file = fopen("./log.txt", "wb");
+  if (!log_file) {
+    fprintf(stderr, "[ERROR]: Failed to open file %s: ", "./log.txt");
+    perror(NULL);
+
     return 1;
   }
 
@@ -174,10 +190,10 @@ int server(void) {
                                               .file = fopen(filename, "wb") }));
 
         for (uint32_t i = 0; i < clients.count; i++) {
-          printf("%d ", DA_AT(clients, i).socket);
+          fprintf(log_file, "%d ", DA_AT(clients, i).socket);
         }
 
-        printf("\n");
+        fprintf(log_file, "\n");
       }
     }
 
@@ -188,14 +204,14 @@ int server(void) {
 
       if (read_msg(DA_AT(clients, i).socket, buf, BUFSIZE, &n) ==
           ERROR_TYPE_CONNECTION_NOT_OPEN) {
-        printf("Purged %d!\n", DA_AT(clients, i).socket);
+        fprintf(log_file, "Purged %d!\n", DA_AT(clients, i).socket);
 
         destroy_inet_socket(DA_AT(clients, i).socket);
         fclose(DA_AT(clients, i).file);
 
         DA_POP(&clients, i); // remove closed connection
 
-        printf("error: %s\n", strerror(errno));
+        fprintf(log_file, "error: %s\n", strerror(errno));
 
         continue;
 
@@ -203,9 +219,11 @@ int server(void) {
         int ret = write_to_file(DA_AT(clients, i).file, buf, n);
         assert(ret == 0);
 
-        // printf("%d: %.*s%c", DA_AT(clients, i).socket, n, buf,
-        //        buf[n - 1] != '\n' ? '\n' : 0);
-        printf("%d: sizeof message: %d\n", DA_AT(clients, i).socket, n);
+        ret = write_to_file(send_fifo, buf, n);
+        assert(ret == 0);
+
+        fprintf(log_file, "%d: sizeof message: %d\n", DA_AT(clients, i).socket,
+                n);
       }
 
       {
@@ -217,14 +235,14 @@ int server(void) {
         if (send_msg(DA_AT(clients, i).socket, &tmp, tmp.message_size) ==
             ERROR_TYPE_CONNECTION_NOT_OPEN) {
           if (errno != EWOULDBLOCK || errno != EAGAIN) {
-            printf("Purged %d!\n", DA_AT(clients, i).socket);
+            fprintf(log_file, "Purged %d!\n", DA_AT(clients, i).socket);
 
             destroy_inet_socket(DA_AT(clients, i).socket);
             fclose(DA_AT(clients, i).file);
 
             DA_POP(&clients, i); // remove closed connection
 
-            printf("error: %s\n", strerror(errno));
+            fprintf(log_file, "error: %s\n", strerror(errno));
           }
         }
       }
